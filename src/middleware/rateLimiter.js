@@ -22,5 +22,5 @@ export const apiRateLimiter = createRateLimiter();
 
 export const strictRateLimiter = createRateLimiter({
   windowMs: 60 * 1000,
-  max: 10
+  max: 100
 });

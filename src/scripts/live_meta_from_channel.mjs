@@ -15,8 +15,14 @@ import { resolve } from "node:path";
 
 /* ------------------------------- Config básica ------------------------------ */
 
-const UA =
-  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124 Safari/537.36";
+// Rotate User Agents to avoid detection
+const USER_AGENTS = [
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+  "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+];
+
+const getRandomUA = () => USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)];
 const YT_WATCH = (id) => `https://www.youtube.com/watch?v=${encodeURIComponent(id)}`;
 const YT_LIVE_CHANNEL = (uc) => `https://www.youtube.com/channel/${encodeURIComponent(uc)}/live`;
 
@@ -38,22 +44,48 @@ function parseArgs(argv = process.argv.slice(2)) {
 }
 
 async function fetchText(url, opts = {}) {
-  const r = await fetch(url, {
-    redirect: opts.redirect ?? "follow",
-    headers: {
-      "User-Agent": UA,
-      "Accept-Language": "es-ES,es;q=0.9,en;q=0.8",
-      Accept:
-        "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-      "Cache-Control": "no-cache",
-      Pragma: "no-cache",
-      ...(opts.headers || {}),
-    },
-  });
-  if (!r.ok && !(r.status >= 300 && r.status < 400)) {
-    throw new Error(`HTTP ${r.status} al solicitar ${url}`);
+  const maxRetries = 3;
+  let attempt = 0;
+  
+  while (attempt < maxRetries) {
+    try {
+      // Add delay to avoid rate limiting
+      if (opts.delay !== false && attempt > 0) {
+        const delay = Math.pow(2, attempt) * 1000 + Math.random() * 2000;
+        await new Promise(resolve => setTimeout(resolve, delay));
+      } else if (opts.delay !== false) {
+        await new Promise(resolve => setTimeout(resolve, 1000 + Math.random() * 2000));
+      }
+      
+      const r = await fetch(url, {
+        redirect: opts.redirect ?? "follow",
+        headers: {
+          "User-Agent": getRandomUA(),
+          "Accept-Language": "es-ES,es;q=0.9,en;q=0.8",
+          Accept:
+            "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+          "Cache-Control": "no-cache",
+          Pragma: "no-cache",
+          ...(opts.headers || {}),
+        },
+      });
+      
+      if (r.status === 429 && attempt < maxRetries - 1) {
+        attempt++;
+        console.warn(`Rate limited, retrying in ${Math.pow(2, attempt)} seconds... (attempt ${attempt + 1})`);
+        continue;
+      }
+      
+      if (!r.ok && !(r.status >= 300 && r.status < 400)) {
+        throw new Error(`HTTP ${r.status} al solicitar ${url}`);
+      }
+      return { r, text: r.status >= 300 ? "" : await r.text() };
+    } catch (error) {
+      if (attempt === maxRetries - 1) throw error;
+      attempt++;
+      console.warn(`Request failed, retrying... (attempt ${attempt + 1})`);
+    }
   }
-  return { r, text: r.status >= 300 ? "" : await r.text() };
 }
 
 function extractJsonFromHtml(html, varName) {
@@ -139,7 +171,7 @@ function isLiveNowFromHtml(html) {
 
 /* ------------------- Resolver videoId cuando solo hay canal ------------------ */
 
-async function resolveLiveVideoIdStrict(channelId) {
+export async function resolveLiveVideoIdStrict(channelId) {
   // 1) Redirección 3xx fiable
   const { r, text } = await fetchText(YT_LIVE_CHANNEL(channelId), { redirect: "manual" });
   if (r.status >= 300 && r.status < 400) {
@@ -172,7 +204,7 @@ async function resolveLiveVideoIdStrict(channelId) {
 
 /* ------------------------ Obtener metadatos desde videoId ------------------- */
 
-async function getLiveMetaFromVideoId(videoId) {
+export async function getLiveMetaFromVideoId(videoId) {
   const { text: html } = await fetchText(YT_WATCH(videoId));
   const player = extractJsonFromHtml(html, "ytInitialPlayerResponse");
   const initial = extractJsonFromHtml(html, "ytInitialData");
@@ -243,11 +275,23 @@ export async function runCLI() {
   }
 
   try {
+    // Try new service first, fallback to original methods
+    const youtubeService = await import('../services/youtubeService.js').then(m => m.default);
+    
     if (args.video) {
-      const meta = await getLiveMetaFromVideoId(args.video);
-      console.log(JSON.stringify({ mode: "video", ...meta }, null, 2));
-      process.exit(meta.isLiveNow ? 0 : 0); // si no está live, igualmente se devuelve info del vídeo
-      return;
+      try {
+        const meta = await youtubeService.getLiveMetadata(null, args.video);
+        console.log(JSON.stringify({ mode: "video", ...meta }, null, 2));
+        process.exit(meta.isLiveNow ? 0 : 0);
+        return;
+      } catch (serviceError) {
+        console.warn("Service failed, trying original method:", serviceError.message);
+        // Fallback to original method
+        const meta = await getLiveMetaFromVideoId(args.video);
+        console.log(JSON.stringify({ mode: "video", method: "fallback", ...meta }, null, 2));
+        process.exit(meta.isLiveNow ? 0 : 0);
+        return;
+      }
     }
 
     if (args.channel) {
@@ -255,26 +299,52 @@ export async function runCLI() {
         console.error("El channelId debe empezar por 'UC'.");
         process.exit(2);
       }
-      const videoId = await resolveLiveVideoIdStrict(args.channel);
-      if (!videoId) {
+      
+      try {
+        const meta = await youtubeService.getLiveMetadata(args.channel);
+        if (!meta) {
+          console.log(JSON.stringify({
+            mode: "channel",
+            channelId: args.channel,
+            videoId: null,
+            isLiveNow: false,
+            note: "El canal no está en directo"
+          }, null, 2));
+          process.exit(3);
+          return;
+        }
         console.log(JSON.stringify({
           mode: "channel",
           channelId: args.channel,
-          videoId: null,
-          isLiveNow: false,
-          note: "El canal no está en directo"
+          ...meta
         }, null, 2));
-        process.exit(3);
+        process.exit(meta.isLiveNow ? 0 : 0);
+        return;
+      } catch (serviceError) {
+        console.warn("Service failed, trying original method:", serviceError.message);
+        // Fallback to original method
+        const videoId = await resolveLiveVideoIdStrict(args.channel);
+        if (!videoId) {
+          console.log(JSON.stringify({
+            mode: "channel",
+            channelId: args.channel,
+            videoId: null,
+            isLiveNow: false,
+            note: "El canal no está en directo"
+          }, null, 2));
+          process.exit(3);
+          return;
+        }
+        const meta = await getLiveMetaFromVideoId(videoId);
+        console.log(JSON.stringify({
+          mode: "channel",
+          channelId: args.channel,
+          method: "fallback",
+          ...meta
+        }, null, 2));
+        process.exit(meta.isLiveNow ? 0 : 0);
         return;
       }
-      const meta = await getLiveMetaFromVideoId(videoId);
-      console.log(JSON.stringify({
-        mode: "channel",
-        channelId: args.channel,
-        ...meta
-      }, null, 2));
-      process.exit(meta.isLiveNow ? 0 : 0);
-      return;
     }
 
     printHelp();

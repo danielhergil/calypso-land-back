@@ -7,6 +7,9 @@ import { requestLogger } from './middleware/requestLogger.js';
 import { errorHandler, notFoundHandler } from './middleware/errorHandler.js';
 import { apiRateLimiter } from './middleware/rateLimiter.js';
 import youtubeRoutes from './routes/youtube.js';
+import realtimeRoutes from './routes/realtime.js';
+import hybridRoutes from './routes/hybrid.js';
+import statusRoutes from './routes/status.js';
 import logger from './config/logger.js';
 
 const app = express();
@@ -39,14 +42,29 @@ app.get('/', (req, res) => {
     status: 'running',
     timestamp: new Date().toISOString(),
     endpoints: {
-      video: '/api/youtube/video/:videoId',
-      channel: '/api/youtube/channel/:channelId',
-      health: '/api/youtube/health'
+      video: '/api/youtube/video/:videoId (cached)',
+      channel: '/api/youtube/channel/:channelId (cached)',
+      status: '/api/youtube/status/:channelId (cached)',
+      viewers: '/api/youtube/viewers/:channelId (cached)',
+      realtimeVideo: '/api/realtime/video/:videoId (no cache)',
+      realtimeChannel: '/api/realtime/channel/:channelId (no cache)',
+      hybridVideo: '/api/hybrid/video/:videoId (accurate viewers)',
+      hybridChannel: '/api/hybrid/channel/:channelId (accurate viewers)',
+      quotaUsage: '/api/hybrid/quota',
+      costCalculator: '/api/hybrid/cost-calculator/:requestsPerDay',
+      statusVideo: '/api/status/video/:videoId (FREE - check if live)',
+      statusChannel: '/api/status/channel/:channelId (FREE - check if live)',
+      statusBatch: '/api/status/batch/videos (FREE - check multiple videos)',
+      health: '/api/youtube/health',
+      clearCache: '/api/youtube/cache/clear (POST)'
     }
   });
 });
 
 app.use('/api/youtube', youtubeRoutes);
+app.use('/api/realtime', realtimeRoutes);
+app.use('/api/hybrid', hybridRoutes);
+app.use('/api/status', statusRoutes);
 
 app.use(notFoundHandler);
 app.use(errorHandler);

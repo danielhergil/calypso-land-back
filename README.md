@@ -1,6 +1,6 @@
 # YouTube Metadata API Server
 
-A high-performance, production-ready backend server for retrieving YouTube video and channel metadata through web scraping. Built with Express.js and designed to handle multiple concurrent users with proper rate limiting, caching, and error handling.
+A high-performance, production-ready backend server for retrieving YouTube video and channel metadata. Features multiple fallback methods and hybrid approach combining free metadata with accurate viewer counts from YouTube Data API v3.
 
 ## Features
 
@@ -10,37 +10,49 @@ A high-performance, production-ready backend server for retrieving YouTube video
 - 📊 **Comprehensive Logging**: Winston-based logging with rotation
 - 🔒 **Security**: Helmet.js, CORS, and input validation
 - 📈 **Monitoring**: Health check endpoint with metrics
-- 🐳 **Production Ready**: Environment-based configuration
+- 🎯 **Hybrid Approach**: Free metadata + accurate concurrent viewers
+- 💰 **Cost-Effective**: Uses YouTube API v3 only for viewer counts
+- 🔄 **Multiple Fallbacks**: innerTube.js → yt-dlp → Invidious → scraping
 
 ## API Endpoints
 
-### Get Video Metadata
-```
+### 🆓 Free Endpoints (No API quota)
+```bash
+# Video metadata with total stream views
 GET /api/youtube/video/:videoId
-```
-Retrieves metadata for a specific YouTube video.
 
-**Example:**
-```bash
-curl http://localhost:3001/api/youtube/video/3ln7wgHJ7eU
-```
-
-### Get Channel Live Stream
-```
+# Channel live stream metadata
 GET /api/youtube/channel/:channelId
-```
-Retrieves current live stream metadata for a channel.
 
-**Example:**
+# Real-time data (no cache)
+GET /api/realtime/video/:videoId
+GET /api/realtime/channel/:channelId
+
+# Live status check (fast)
+GET /api/status/video/:videoId
+GET /api/status/channel/:channelId
+POST /api/status/batch/videos
+```
+
+### 🎯 Hybrid Endpoints (Accurate concurrent viewers)
 ```bash
-curl http://localhost:3001/api/youtube/channel/UCxxxxxxxxxxxxxxxxxxxxxx
+# Accurate concurrent viewers + free metadata
+GET /api/hybrid/video/:videoId
+GET /api/hybrid/channel/:channelId
+
+# Monitor API usage
+GET /api/hybrid/quota
+GET /api/hybrid/cost-calculator/:requestsPerDay
 ```
 
-### Health Check
-```
+### 📊 Monitoring
+```bash
+# Health check
 GET /api/youtube/health
+
+# Clear cache
+POST /api/youtube/cache/clear
 ```
-Returns server health and cache statistics.
 
 ## Installation & Setup
 
@@ -63,6 +75,9 @@ CACHE_TTL=300
 RATE_LIMIT_WINDOW=900000
 RATE_LIMIT_MAX=100
 LOG_LEVEL=info
+
+# Optional: YouTube Data API v3 key for accurate concurrent viewers
+YOUTUBE_API_KEY=your_api_key_here
 ```
 
 4. **Start the server:**
