@@ -100,14 +100,95 @@ class InnerTubeHelper {
       }
 
       // Look for live streams in the channel
-      const videos = channel.videos?.contents || [];
-      const liveVideo = videos.find(video => 
-        video.basic_info?.is_live || 
-        video.badges?.some(badge => badge.label?.toLowerCase().includes('live'))
-      );
+      const channelVideos = channel.videos;
+      const videoItems = [];
 
-      if (liveVideo && liveVideo.id) {
-        const liveInfo = await this.getVideoInfo(liveVideo.id);
+      if (channelVideos && typeof channelVideos[Symbol.iterator] === 'function') {
+        for (const item of channelVideos) {
+          if (item) {
+            videoItems.push(item);
+          }
+        }
+      }
+
+      if (!videoItems.length && Array.isArray(channelVideos?.items)) {
+        videoItems.push(...channelVideos.items.filter(Boolean));
+      }
+
+      // Fallback for older youtubei.js versions where videos are stored in contents
+      if (!videoItems.length && Array.isArray(channelVideos?.contents)) {
+        videoItems.push(...channelVideos.contents.filter(Boolean));
+      }
+
+      const getBadgeLabel = (badge) => {
+        if (!badge) {
+          return null;
+        }
+
+        if (typeof badge.label === 'string') {
+          return badge.label;
+        }
+
+        if (typeof badge?.label?.toString === 'function') {
+          return badge.label.toString();
+        }
+
+        if (typeof badge.text === 'string') {
+          return badge.text;
+        }
+
+        if (typeof badge?.text?.toString === 'function') {
+          return badge.text.toString();
+        }
+
+        return null;
+      };
+
+      let liveVideoId = null;
+
+      for (const item of videoItems) {
+        const videoNode = item?.content ?? item;
+
+        if (!videoNode) {
+          continue;
+        }
+
+        const hasLiveBadge = Array.isArray(videoNode.badges) &&
+          videoNode.badges.some((badge) => {
+            const label = getBadgeLabel(badge);
+            return typeof label === 'string' && label.toLowerCase().includes('live');
+          });
+
+        const isLive = videoNode.is_live === true ||
+          videoNode.isLive === true ||
+          videoNode.basic_info?.is_live === true ||
+          hasLiveBadge;
+
+        if (!isLive) {
+          continue;
+        }
+
+        const possibleIds = [
+          videoNode.id,
+          videoNode.videoId,
+          videoNode.video_id,
+          videoNode.endpoint?.payload?.videoId,
+          videoNode.endpoint?.payload?.video_id,
+          videoNode.endpoint?.watchEndpoint?.videoId,
+          videoNode.navigationEndpoint?.watchEndpoint?.videoId,
+          videoNode.on_tap?.endpoint?.watchEndpoint?.videoId
+        ];
+
+        const foundId = possibleIds.find((id) => typeof id === 'string' && id.length > 0);
+
+        if (foundId) {
+          liveVideoId = foundId;
+          break;
+        }
+      }
+
+      if (liveVideoId) {
+        const liveInfo = await this.getVideoInfo(liveVideoId);
         return {
           ...liveInfo,
           channelId: channelId
