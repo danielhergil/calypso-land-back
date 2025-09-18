@@ -1,7 +1,7 @@
 {
   "name": "youtube-metadata-server",
   "version": "1.0.0",
-  "description": "High-performance backend server for YouTube metadata scraping",
+  "description": "YouTube channel metadata API using Innertube",
   "main": "src/index.js",
   "type": "module",
   "scripts": {
@@ -16,7 +16,7 @@
     "metadata",
     "api",
     "express",
-    "scraping"
+    "innertube"
   ],
   "author": "",
   "license": "MIT",
@@ -30,7 +30,8 @@
     "helmet": "^7.1.0",
     "node-cache": "^5.1.2",
     "winston": "^3.11.0",
-    "youtubei.js": "^15.0.1"
+    "youtubei.js": "^15.0.1",
+    "cheerio": "^1.0.0-rc.12"
   },
   "devDependencies": {
     "eslint": "^8.55.0",

@@ -1,5 +1,5 @@
 import express from 'express';
-import YouTubeHelper from '../utils/youtubeHelper.js';
+import youtubeService from '../services/youtubeService.js';
 import { validateVideoId, validateChannelId, handleValidationErrors } from '../middleware/validation.js';
 import { strictRateLimiter } from '../middleware/rateLimiter.js';
 import cacheService from '../services/cacheService.js';
@@ -18,7 +18,7 @@ router.get('/video/:videoId',
 
       const metadata = await cacheService.getOrSet(
         cacheKey,
-        () => YouTubeHelper.getLiveInfo(null, videoId),
+        () => youtubeService.getLiveMetadata(null, videoId),
         300
       );
 
@@ -63,7 +63,7 @@ router.get('/channel/:channelId',
 
       const metadata = await cacheService.getOrSet(
         cacheKey,
-        () => YouTubeHelper.getLiveInfo(channelId),
+        () => youtubeService.getLiveMetadata(channelId),
         180
       );
 
@@ -111,11 +111,13 @@ router.get('/status/:channelId',
       const { channelId } = req.params;
       const cacheKey = cacheService.generateKey('status', channelId);
 
-      const isLive = await cacheService.getOrSet(
+      const metadata = await cacheService.getOrSet(
         cacheKey,
-        () => YouTubeHelper.isChannelLive(channelId),
+        () => youtubeService.getLiveMetadata(channelId),
         60 // Cache for 1 minute for status checks
       );
+
+      const isLive = metadata?.isLiveNow === true;
 
       logger.info({
         message: 'Channel live status checked',
@@ -146,11 +148,13 @@ router.get('/viewers/:channelId',
       const { channelId } = req.params;
       const cacheKey = cacheService.generateKey('viewers', channelId);
 
-      const viewers = await cacheService.getOrSet(
+      const metadata = await cacheService.getOrSet(
         cacheKey,
-        () => YouTubeHelper.getViewerCount(channelId),
+        () => youtubeService.getLiveMetadata(channelId),
         30 // Cache for 30 seconds for viewer counts
       );
+
+      const viewers = metadata?.concurrentViewers || null;
 
       logger.info({
         message: 'Channel viewer count retrieved',
@@ -177,7 +181,7 @@ router.get('/health', async (req, res) => {
   // Check YouTube service status
   let youtubeStatus = null;
   try {
-    youtubeStatus = await YouTubeHelper.checkStatus();
+    youtubeStatus = await youtubeService.checkAvailableMethods();
   } catch (error) {
     logger.warn({ message: 'Failed to check YouTube service status', error: error.message });
     youtubeStatus = { error: 'Unable to check status' };
@@ -201,13 +205,137 @@ router.get('/health', async (req, res) => {
   });
 });
 
+// New endpoint: Get live chat data
+router.get('/livechat/:videoId',
+  strictRateLimiter,
+  validateVideoId,
+  handleValidationErrors,
+  async (req, res, next) => {
+    try {
+      const { videoId } = req.params;
+
+      const chatData = await youtubeService.getLiveChatData(videoId);
+
+      if (!chatData) {
+        return res.status(404).json({
+          success: false,
+          error: 'Live chat not available for this video',
+          videoId,
+          timestamp: new Date().toISOString()
+        });
+      }
+
+      logger.info({
+        message: 'Live chat data retrieved',
+        videoId,
+        messageCount: chatData.messageCount
+      });
+
+      res.json({
+        success: true,
+        videoId,
+        chatData,
+        timestamp: new Date().toISOString()
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+);
+
+// New endpoint: Get live stats
+router.get('/livestats/:videoId',
+  strictRateLimiter,
+  validateVideoId,
+  handleValidationErrors,
+  async (req, res, next) => {
+    try {
+      const { videoId } = req.params;
+
+      const stats = await youtubeService.getLiveStats(videoId);
+
+      if (!stats) {
+        return res.status(404).json({
+          success: false,
+          error: 'Live stats not available for this video',
+          videoId,
+          timestamp: new Date().toISOString()
+        });
+      }
+
+      logger.info({
+        message: 'Live stats retrieved',
+        videoId,
+        viewers: stats.concurrentViewers
+      });
+
+      res.json({
+        success: true,
+        videoId,
+        stats,
+        timestamp: new Date().toISOString()
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+);
+
+// New endpoint: Get channel by handle
+router.get('/handle/:handle',
+  strictRateLimiter,
+  async (req, res, next) => {
+    try {
+      const { handle } = req.params;
+      const cacheKey = cacheService.generateKey('handle', handle);
+
+      const metadata = await cacheService.getOrSet(
+        cacheKey,
+        () => youtubeService.getLiveMetadata(null, null, handle),
+        180
+      );
+
+      if (!metadata) {
+        logger.info({ message: 'Channel not live', handle });
+        return res.json({
+          success: true,
+          data: {
+            handle,
+            isLiveNow: false,
+            note: 'Channel is not currently live'
+          },
+          cached: cacheService.get(cacheKey) !== null,
+          timestamp: new Date().toISOString()
+        });
+      }
+
+      logger.info({
+        message: 'Channel metadata retrieved by handle',
+        handle,
+        method: metadata.method,
+        isLive: metadata.isLiveNow,
+        videoId: metadata.videoId
+      });
+
+      res.json({
+        success: true,
+        data: metadata,
+        cached: cacheService.get(cacheKey) !== null,
+        timestamp: new Date().toISOString()
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+);
+
 // New endpoint: Clear cache
 router.post('/cache/clear', (req, res) => {
   cacheService.flush();
-  YouTubeHelper.clearCache();
-  
+  youtubeService.clearCache();
+
   logger.info({ message: 'All caches cleared via API' });
-  
+
   res.json({
     success: true,
     message: 'All caches cleared successfully',

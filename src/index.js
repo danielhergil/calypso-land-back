@@ -7,8 +7,6 @@ import { requestLogger } from './middleware/requestLogger.js';
 import { errorHandler, notFoundHandler } from './middleware/errorHandler.js';
 import { apiRateLimiter } from './middleware/rateLimiter.js';
 import youtubeRoutes from './routes/youtube.js';
-import realtimeRoutes from './routes/realtime.js';
-import hybridRoutes from './routes/hybrid.js';
 import statusRoutes from './routes/status.js';
 import logger from './config/logger.js';
 
@@ -38,23 +36,20 @@ app.use(apiRateLimiter);
 app.get('/', (req, res) => {
   res.json({
     message: 'YouTube Metadata API Server',
-    version: '1.0.0',
+    version: '1.0.2',
     status: 'running',
     timestamp: new Date().toISOString(),
     endpoints: {
       video: '/api/youtube/video/:videoId (cached)',
       channel: '/api/youtube/channel/:channelId (cached)',
+      channelByHandle: '/api/youtube/handle/:handle (cached)',
       status: '/api/youtube/status/:channelId (cached)',
       viewers: '/api/youtube/viewers/:channelId (cached)',
-      realtimeVideo: '/api/realtime/video/:videoId (no cache)',
-      realtimeChannel: '/api/realtime/channel/:channelId (no cache)',
-      hybridVideo: '/api/hybrid/video/:videoId (accurate viewers)',
-      hybridChannel: '/api/hybrid/channel/:channelId (accurate viewers)',
-      quotaUsage: '/api/hybrid/quota',
-      costCalculator: '/api/hybrid/cost-calculator/:requestsPerDay',
-      statusVideo: '/api/status/video/:videoId (FREE - check if live)',
-      statusChannel: '/api/status/channel/:channelId (FREE - check if live)',
-      statusBatch: '/api/status/batch/videos (FREE - check multiple videos)',
+      liveChat: '/api/youtube/livechat/:videoId (live chat messages)',
+      liveStats: '/api/youtube/livestats/:videoId (live streaming stats)',
+      statusVideo: '/api/status/video/:videoId (check if live)',
+      statusChannel: '/api/status/channel/:channelId (check if live)',
+      statusBatch: '/api/status/batch/videos (check multiple videos)',
       health: '/api/youtube/health',
       clearCache: '/api/youtube/cache/clear (POST)'
     }
@@ -62,8 +57,6 @@ app.get('/', (req, res) => {
 });
 
 app.use('/api/youtube', youtubeRoutes);
-app.use('/api/realtime', realtimeRoutes);
-app.use('/api/hybrid', hybridRoutes);
 app.use('/api/status', statusRoutes);
 
 app.use(notFoundHandler);

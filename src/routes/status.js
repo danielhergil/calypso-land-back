@@ -1,20 +1,19 @@
 import express from 'express';
-import YouTubeHelper from '../utils/youtubeHelper.js';
 import { validateVideoId, validateChannelId, handleValidationErrors } from '../middleware/validation.js';
 import { strictRateLimiter } from '../middleware/rateLimiter.js';
 import cacheService from '../services/cacheService.js';
 import logger from '../config/logger.js';
+import youtubeService from '../services/youtubeService.js';
 
 const router = express.Router();
 
 /**
- * FREE Live Status Endpoints
- * These endpoints use only free methods (no YouTube API quota)
- * Purpose: Check if channel/video is live before using paid API for concurrent viewers
+ * Live Status Check Endpoints
+ * Check if channels/videos are currently live using Innertube
  */
 
-// Check if a specific video is live (FREE - no API quota)
-router.get('/video/:videoId', 
+// Check if a specific video is live
+router.get('/video/:videoId',
   strictRateLimiter,
   validateVideoId,
   handleValidationErrors,
@@ -22,9 +21,9 @@ router.get('/video/:videoId',
     try {
       const { videoId } = req.params;
       const { nocache } = req.query;
-      
+
       let result;
-      
+
       if (nocache) {
         // Get fresh status
         result = await getVideoLiveStatus(videoId);
@@ -52,11 +51,11 @@ router.get('/video/:videoId',
         method: result.method,
         title: result.title || null,
         channelName: result.channelName || null,
-        note: result.isLive ? 
-          'Video is live - you can now use /api/hybrid/video for accurate viewers' :
+        note: result.isLive ?
+          'Video is live' :
           'Video is not live',
         cached: !nocache && cacheService.get(cacheService.generateKey('live-status-video', videoId)) !== null,
-        quotaUsed: 0, // Free endpoint
+        quotaUsed: 0,
         timestamp: new Date().toISOString()
       });
     } catch (error) {
@@ -65,8 +64,8 @@ router.get('/video/:videoId',
   }
 );
 
-// Check if a channel is live (FREE - no API quota)
-router.get('/channel/:channelId', 
+// Check if a channel is live
+router.get('/channel/:channelId',
   strictRateLimiter,
   validateChannelId,
   handleValidationErrors,
@@ -74,18 +73,18 @@ router.get('/channel/:channelId',
     try {
       const { channelId } = req.params;
       const { nocache } = req.query;
-      
+
       let result;
-      
+
       if (nocache) {
-        // Get fresh status
-        result = await getChannelLiveStatus(channelId);
+        // Get fresh status using youtubeService directly
+        result = await getChannelLiveStatusDirect(channelId);
       } else {
         // Use shorter cache (20 seconds for channel status since it's now fast)
         const cacheKey = cacheService.generateKey('live-status-channel', channelId);
         result = await cacheService.getOrSet(
           cacheKey,
-          () => getChannelLiveStatus(channelId),
+          () => getChannelLiveStatusDirect(channelId),
           20 // 20 seconds cache for channel status (reduced from 60s)
         );
       }
@@ -106,11 +105,11 @@ router.get('/channel/:channelId',
         method: result.method,
         title: result.title || null,
         channelName: result.channelName || null,
-        note: result.isLive ? 
-          `Channel is live - you can use /api/hybrid/video/${result.liveVideoId} for accurate viewers` :
+        note: result.isLive ?
+          `Channel is live - use /api/youtube/video/${result.liveVideoId} for details` :
           'Channel is not currently live',
         cached: !nocache && cacheService.get(cacheService.generateKey('live-status-channel', channelId)) !== null,
-        quotaUsed: 0, // Free endpoint
+        quotaUsed: 0,
         timestamp: new Date().toISOString()
       });
     } catch (error) {
@@ -119,27 +118,27 @@ router.get('/channel/:channelId',
   }
 );
 
-// Batch status check for multiple videos (FREE - no API quota)
+// Batch status check for multiple videos
 router.post('/batch/videos',
-  strictRateLimiter, 
+  strictRateLimiter,
   async (req, res, next) => {
     try {
       const { videoIds } = req.body;
-      
+
       if (!Array.isArray(videoIds) || videoIds.length === 0) {
         return res.status(400).json({
           success: false,
           error: 'videoIds must be a non-empty array'
         });
       }
-      
+
       if (videoIds.length > 20) {
         return res.status(400).json({
           success: false,
           error: 'Maximum 20 videos per batch request'
         });
       }
-      
+
       const results = {};
       const promises = videoIds.map(async (videoId) => {
         try {
@@ -157,15 +156,15 @@ router.post('/batch/videos',
           };
         }
       });
-      
+
       await Promise.all(promises);
-      
+
       logger.info({
         message: 'Batch video status check completed',
         videoCount: videoIds.length,
         liveCount: Object.values(results).filter(r => r.isLive).length
       });
-      
+
       res.json({
         success: true,
         results,
@@ -175,7 +174,7 @@ router.post('/batch/videos',
           notLive: Object.values(results).filter(r => !r.isLive && !r.error).length,
           errors: Object.values(results).filter(r => r.error).length
         },
-        quotaUsed: 0, // Free endpoint
+        quotaUsed: 0,
         timestamp: new Date().toISOString()
       });
     } catch (error) {
@@ -184,12 +183,11 @@ router.post('/batch/videos',
   }
 );
 
-// Helper function to get video live status using free methods only
+// Helper function to get video live status
 async function getVideoLiveStatus(videoId) {
   try {
-    // Try innerTube.js first (most reliable free method)
-    const metadata = await YouTubeHelper.getLiveInfo(null, videoId);
-    
+    const metadata = await youtubeService.getLiveMetadata(null, videoId);
+
     if (metadata) {
       return {
         isLive: metadata.isLiveNow || false,
@@ -198,7 +196,7 @@ async function getVideoLiveStatus(videoId) {
         method: metadata.method
       };
     }
-    
+
     return {
       isLive: false,
       title: null,
@@ -216,19 +214,29 @@ async function getVideoLiveStatus(videoId) {
   }
 }
 
-// Helper function to get channel live status using free methods only
-async function getChannelLiveStatus(channelId) {
+// Helper function to get channel live status
+async function getChannelLiveStatusDirect(channelId) {
   try {
-    // Use fast channel check that only tries innerTube.js with 3s timeout
-    const result = await YouTubeHelper.getChannelLiveStatusFast(channelId);
-    
+    const metadata = await youtubeService.getLiveMetadata(channelId);
+
+    if (metadata && metadata.isLiveNow) {
+      return {
+        isLive: true,
+        liveVideoId: metadata.videoId || null,
+        title: metadata.title || null,
+        channelName: metadata.channelName || null,
+        method: metadata.method,
+        error: undefined
+      };
+    }
+
     return {
-      isLive: result.isLive,
-      liveVideoId: result.liveVideoId || null,
-      title: result.title || null,
-      channelName: result.channelName || null,
-      method: result.method,
-      error: result.error || undefined
+      isLive: false,
+      liveVideoId: null,
+      title: null,
+      channelName: null,
+      method: 'not-live',
+      error: null
     };
   } catch (error) {
     return {
