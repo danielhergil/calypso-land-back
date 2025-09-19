@@ -149,7 +149,7 @@ class WebScrapingHelper {
             // Extract all video IDs from the page
             const videoIdMatches = scriptContent.match(/"videoId":"([a-zA-Z0-9_-]{11})"/g) || [];
 
-            for (const match of videoIdMatches) {
+            for (const match of videoIdMatches.slice(0, 1)) {
               const videoId = match.match(/"videoId":"([a-zA-Z0-9_-]{11})"/)[1];
               console.log(`Checking video ID from channel page: ${videoId}`);
 

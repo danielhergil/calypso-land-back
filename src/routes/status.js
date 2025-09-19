@@ -250,4 +250,74 @@ async function getChannelLiveStatusDirect(channelId) {
   }
 }
 
+// Batch status check for multiple channels
+router.post('/batch/channels',
+  strictRateLimiter,
+  async (req, res, next) => {
+    try {
+      const { channelIds } = req.body;
+
+      if (!Array.isArray(channelIds) || channelIds.length === 0) {
+        return res.status(400).json({
+          success: false,
+          error: 'channelIds must be a non-empty array'
+        });
+      }
+
+      if (channelIds.length > 20) {
+        return res.status(400).json({
+          success: false,
+          error: 'Maximum 20 channels per batch request'
+        });
+      }
+
+      const results = {};
+      const promises = channelIds.map(async (channelId) => {
+        try {
+          const result = await getChannelLiveStatusDirect(channelId);
+          results[channelId] = {
+            isLive: result.isLive,
+            liveVideoId: result.liveVideoId,
+            title: result.title,
+            channelName: result.channelName,
+            method: result.method
+          };
+        } catch (error) {
+          results[channelId] = {
+            isLive: false,
+            liveVideoId: null,
+            title: null,
+            channelName: null,
+            error: error.message,
+            method: 'error'
+          };
+        }
+      });
+
+      await Promise.all(promises);
+
+      logger.info({
+        message: 'Batch channel status check completed',
+        channelCount: channelIds.length,
+        liveCount: Object.values(results).filter(r => r.isLive).length
+      });
+
+      res.json({
+        success: true,
+        results,
+        summary: {
+          total: channelIds.length,
+          live: Object.values(results).filter(r => r.isLive).length,
+          notLive: Object.values(results).filter(r => !r.isLive && !r.error).length,
+          errors: Object.values(results).filter(r => r.error).length
+        },
+        quotaUsed: 0,
+        timestamp: new Date().toISOString()
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+);
+
 export default router;
