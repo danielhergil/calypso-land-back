@@ -1,5 +1,6 @@
 import innertubeHelper from '../utils/innertubeHelper.js';
 import webScrapingHelper from '../utils/webScrapingHelper.js';
+import ytdlHelper from '../utils/ytdlHelper.js';
 
 class YouTubeService {
   constructor() {
@@ -19,36 +20,77 @@ class YouTubeService {
       this.cache.delete(cacheKey);
     }
 
-    let result = null;
+    // Set overall timeout for the entire operation (max 6 seconds)
+    const globalTimeout = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error('Service timeout - channel likely offline')), 6000)
+    );
 
-    // Method 1: Try Innertube first (faster when it works)
-    try {
-      console.log('Trying Innertube method...');
-      result = await innertubeHelper.getLiveInfo(channelId, videoId, channelHandle);
-      if (result && result.isLiveNow) {
-        console.log('Innertube detected live stream');
-        this.setCacheAndReturn(cacheKey, result);
-        return result;
+    const checkMethods = async () => {
+      let result = null;
+
+      // Method 1: Try YTDL-Core first (fastest and most reliable for status checks)
+      if (channelId && !videoId && !channelHandle) {
+        try {
+          console.log('Trying YTDL-Core method...');
+          result = await Promise.race([
+            ytdlHelper.getQuickLiveInfo(channelId),
+            new Promise((_, reject) => setTimeout(() => reject(new Error('YTDL timeout')), 3000))
+          ]);
+          if (result && result.isLiveNow) {
+            console.log('YTDL-Core detected live stream');
+            this.setCacheAndReturn(cacheKey, result);
+            return result;
+          }
+        } catch (error) {
+          console.warn('YTDL-Core method failed:', error.message);
+        }
       }
-    } catch (error) {
-      console.warn('InnerTube method failed:', error.message);
-    }
 
-    // Method 2: Try web scraping as fallback (more reliable)
-    try {
-      console.log('Trying web scraping method...');
-      result = await webScrapingHelper.getLiveInfo(channelId, videoId);
-      if (result) {
-        console.log(`Web scraping result: live=${result.isLiveNow}`);
-        this.setCacheAndReturn(cacheKey, result);
-        return result;
+      // Method 2: Try Innertube (for full metadata and handles)
+      try {
+        console.log('Trying Innertube method...');
+        result = await Promise.race([
+          innertubeHelper.getLiveInfo(channelId, videoId, channelHandle),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('Innertube timeout')), 4000))
+        ]);
+        if (result && result.isLiveNow) {
+          console.log('Innertube detected live stream');
+          this.setCacheAndReturn(cacheKey, result);
+          return result;
+        }
+      } catch (error) {
+        console.warn('InnerTube method failed:', error.message);
       }
-    } catch (error) {
-      console.warn('Web scraping method failed:', error.message);
-    }
 
-    console.log('No live stream detected by any method');
-    return null;
+      // Method 3: Try web scraping as final fallback
+      try {
+        console.log('Trying web scraping method...');
+        result = await Promise.race([
+          webScrapingHelper.getLiveInfo(channelId, videoId),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('Web scraping timeout')), 2000))
+        ]);
+        if (result) {
+          console.log(`Web scraping result: live=${result.isLiveNow}`);
+          this.setCacheAndReturn(cacheKey, result);
+          return result;
+        }
+      } catch (error) {
+        console.warn('Web scraping method failed:', error.message);
+      }
+
+      console.log('No live stream detected by any method');
+      return null;
+    };
+
+    try {
+      return await Promise.race([
+        checkMethods(),
+        globalTimeout
+      ]);
+    } catch (error) {
+      console.log('Service operation timed out:', error.message);
+      return null;
+    }
   }
 
   async getLiveChatData(videoId) {
@@ -99,6 +141,38 @@ class YouTubeService {
     }
 
     return methods;
+  }
+
+  async getQuickLiveStatus(channelId) {
+    try {
+      // Ultra-fast status check using only YTDL-Core
+      console.log(`Quick status check for channel: ${channelId}`);
+
+      const isLive = await Promise.race([
+        ytdlHelper.isChannelLive(channelId),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('Quick status timeout')), 2000)
+        )
+      ]);
+
+      return {
+        success: true,
+        channelId,
+        isLive: !!isLive,
+        method: 'ytdl-quick',
+        timestamp: new Date().toISOString()
+      };
+    } catch (error) {
+      console.warn('Quick status check failed:', error.message);
+      return {
+        success: false,
+        channelId,
+        isLive: false,
+        method: 'ytdl-quick-timeout',
+        error: error.message,
+        timestamp: new Date().toISOString()
+      };
+    }
   }
 
   clearCache() {

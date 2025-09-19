@@ -102,7 +102,7 @@ router.get('/channel/:channelId',
 );
 
 // New endpoint: Check if channel is live (quick boolean check)
-router.get('/status/:channelId', 
+router.get('/status/:channelId',
   strictRateLimiter,
   validateChannelId,
   handleValidationErrors,
@@ -111,11 +111,49 @@ router.get('/status/:channelId',
       const { channelId } = req.params;
       const cacheKey = cacheService.generateKey('status', channelId);
 
-      const metadata = await cacheService.getOrSet(
-        cacheKey,
-        () => youtubeService.getLiveMetadata(channelId),
-        60 // Cache for 1 minute for status checks
+      // Add very aggressive timeout wrapper at route level
+      const fastTimeout = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('Route timeout - returning offline')), 1500)
       );
+
+      let metadata = null;
+      let fromCache = false;
+
+      // Check cache first manually
+      const cached = cacheService.get(cacheKey);
+      if (cached) {
+        metadata = cached;
+        fromCache = true;
+        logger.info({ message: 'Using cached data for status check', channelId });
+      } else {
+        try {
+          // Direct call without cache wrapper for timeout
+          metadata = await Promise.race([
+            youtubeService.getLiveMetadata(channelId),
+            fastTimeout
+          ]);
+
+          // Cache the result if we got one
+          if (metadata) {
+            cacheService.set(cacheKey, metadata, 60);
+          }
+        } catch (timeoutError) {
+          logger.warn({
+            message: 'Channel status check timed out, returning offline',
+            channelId,
+            error: timeoutError.message
+          });
+          // Return offline status for timeout
+          return res.json({
+            success: true,
+            channelId,
+            isLive: false,
+            cached: false,
+            note: 'Timeout - assuming offline',
+            timestamp: new Date().toISOString()
+          });
+        }
+      }
 
       const isLive = metadata?.isLiveNow === true;
 
@@ -129,7 +167,7 @@ router.get('/status/:channelId',
         success: true,
         channelId,
         isLive,
-        cached: cacheService.get(cacheKey) !== null,
+        cached: fromCache,
         timestamp: new Date().toISOString()
       });
     } catch (error) {
@@ -323,6 +361,32 @@ router.get('/handle/:handle',
         cached: cacheService.get(cacheKey) !== null,
         timestamp: new Date().toISOString()
       });
+    } catch (error) {
+      next(error);
+    }
+  }
+);
+
+// New endpoint: Ultra-fast status check using YTDL-Core only
+router.get('/quick-status/:channelId',
+  strictRateLimiter,
+  validateChannelId,
+  handleValidationErrors,
+  async (req, res, next) => {
+    try {
+      const { channelId } = req.params;
+
+      // Use the new quick status method
+      const result = await youtubeService.getQuickLiveStatus(channelId);
+
+      logger.info({
+        message: 'Quick status check completed',
+        channelId,
+        isLive: result.isLive,
+        method: result.method
+      });
+
+      res.json(result);
     } catch (error) {
       next(error);
     }

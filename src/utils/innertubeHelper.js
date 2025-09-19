@@ -13,7 +13,13 @@ class InnerTubeHelper {
     if (!this.client) {
       try {
         console.log('Initializing Innertube client...');
-        this.client = await Innertube.create();
+        // Add timeout to client initialization
+        this.client = await Promise.race([
+          Innertube.create(),
+          new Promise((_, reject) =>
+            setTimeout(() => reject(new Error('Innertube client initialization timeout')), 3000)
+          )
+        ]);
         console.log('Innertube client initialized successfully');
       } catch (error) {
         console.error('Failed to initialize Innertube client:', error.message);
@@ -139,132 +145,187 @@ class InnerTubeHelper {
       console.log(`Getting live info for channel: ${channelId}`);
       const startTime = Date.now();
 
-      // Method 1: Direct search approach using InnerTube's search
-      try {
-        console.log('Trying direct search approach...');
-        const searchResults = await this.client.search(`${channelId} live`, { type: 'video' });
+      // Set overall timeout for the entire operation (max 5 seconds total)
+      const globalTimeoutPromise = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('Overall timeout - channel likely offline')), 5000)
+      );
 
-        if (searchResults && searchResults.contents) {
-          for (const result of searchResults.contents) {
-            if (result && result.id && result.basic_info) {
-              // Check if this video is from the target channel and is live
-              const channelMatch = result.basic_info.channel?.id === channelId;
-              const isLive = result.basic_info.is_live ||
-                            result.badges?.some(badge =>
-                              badge && badge.label && badge.label.toLowerCase().includes('live'));
+      const checkLiveInfo = async () => {
+        // Method 1: Fast live page check first (quickest way to determine if offline)
+        try {
+          console.log('Trying fast live page check...');
+          const livePageVideoId = await Promise.race([
+            this.getLivePageVideoId(channelId),
+            new Promise((_, reject) => setTimeout(() => reject(new Error('Fast timeout')), 1500))
+          ]);
 
-              if (channelMatch && isLive) {
-                console.log(`Found live video via search: ${result.id}`);
-                const videoInfo = await this.getVideoInfo(result.id);
-                if (videoInfo && videoInfo.isLiveNow) {
-                  return {
-                    ...videoInfo,
-                    channelId: channelId,
-                    liveChatEnabled: true
-                  };
+          if (livePageVideoId) {
+            console.log(`Found live video via fast live page: ${livePageVideoId}`);
+            const liveInfo = await this.getVideoInfo(livePageVideoId);
+            if (liveInfo && liveInfo.isLiveNow) {
+              const liveChatData = await this.getLiveChatData(livePageVideoId);
+              return {
+                ...liveInfo,
+                channelId: channelId,
+                liveChatEnabled: !!liveChatData,
+                liveChat: liveChatData
+              };
+            }
+          }
+        } catch (fastError) {
+          console.log('Fast live page check failed:', fastError.message);
+        }
+
+        // Method 2: Direct search approach using InnerTube's search (with shorter timeout)
+        try {
+          console.log('Trying direct search approach...');
+          const searchResults = await Promise.race([
+            this.client.search(`${channelId} live`, { type: 'video' }),
+            new Promise((_, reject) => setTimeout(() => reject(new Error('Search timeout')), 2000))
+          ]);
+
+          if (searchResults && searchResults.contents) {
+            for (const result of searchResults.contents) {
+              if (result && result.id && result.basic_info) {
+                // Check if this video is from the target channel and is live
+                const channelMatch = result.basic_info.channel?.id === channelId;
+                const isLive = result.basic_info.is_live ||
+                              result.badges?.some(badge =>
+                                badge && badge.label && badge.label.toLowerCase().includes('live'));
+
+                if (channelMatch && isLive) {
+                  console.log(`Found live video via search: ${result.id}`);
+                  const videoInfo = await this.getVideoInfo(result.id);
+                  if (videoInfo && videoInfo.isLiveNow) {
+                    return {
+                      ...videoInfo,
+                      channelId: channelId,
+                      liveChatEnabled: true
+                    };
+                  }
                 }
               }
             }
           }
+        } catch (searchError) {
+          console.log('Search method failed:', searchError.message);
         }
-      } catch (searchError) {
-        console.log('Search method failed:', searchError.message);
-      }
 
-      // Method 2: Try live page approach
-      try {
-        console.log('Trying live page approach...');
-        const livePageVideoId = await this.getLivePageVideoId(channelId);
-        if (livePageVideoId) {
-          console.log(`Found live video via live page: ${livePageVideoId}`);
-          const liveInfo = await this.getVideoInfo(livePageVideoId);
-          if (liveInfo && liveInfo.isLiveNow) {
-            // Get live chat if available
-            const liveChatData = await this.getLiveChatData(livePageVideoId);
-            return {
-              ...liveInfo,
-              channelId: channelId,
-              liveChatEnabled: !!liveChatData,
-              liveChat: liveChatData
-            };
-          }
-        }
-      } catch (livePageError) {
-        console.log('Live page method failed:', livePageError.message);
-      }
-
-      // Method 3: Get channel and look for live videos
-      try {
-        console.log('Trying channel approach...');
-        const channel = await Promise.race([
-          this.client.getChannel(channelId),
-          new Promise((_, reject) => setTimeout(() => reject(new Error('Channel fetch timeout')), 5000))
-        ]);
-
-        if (!channel) {
-          console.log('Channel not found');
+        // Early return if methods above took too long
+        if (Date.now() - startTime > 4000) {
+          console.log('Early timeout - skipping remaining methods');
           return null;
         }
 
-        console.log('Channel retrieved, looking for live content...');
-
-        // Check live_streams section first
-        if (channel.live_streams && channel.live_streams.contents) {
-          console.log(`Found ${channel.live_streams.contents.length} entries in live_streams`);
-          for (const video of channel.live_streams.contents) {
-            if (video && video.id) {
-              console.log(`Checking live stream: ${video.id}`);
-              const videoInfo = await this.getVideoInfo(video.id);
-              if (videoInfo && videoInfo.isLiveNow) {
-                console.log(`Confirmed live video: ${video.id}`);
-                const liveChatData = await this.getLiveChatData(video.id);
+        // Method 3: Try live page approach (only if we have time)
+        if (Date.now() - startTime < 5000) {
+          try {
+            console.log('Trying live page approach...');
+            const livePageVideoId = await Promise.race([
+              this.getLivePageVideoId(channelId),
+              new Promise((_, reject) => setTimeout(() => reject(new Error('Live page timeout')), 1500))
+            ]);
+            if (livePageVideoId) {
+              console.log(`Found live video via live page: ${livePageVideoId}`);
+              const liveInfo = await this.getVideoInfo(livePageVideoId);
+              if (liveInfo && liveInfo.isLiveNow) {
+                const liveChatData = await this.getLiveChatData(livePageVideoId);
                 return {
-                  ...videoInfo,
+                  ...liveInfo,
                   channelId: channelId,
                   liveChatEnabled: !!liveChatData,
                   liveChat: liveChatData
                 };
               }
             }
+          } catch (livePageError) {
+            console.log('Live page method failed:', livePageError.message);
           }
         }
 
-        // Check regular videos section
-        if (channel.videos && channel.videos.contents) {
-          console.log(`Checking first 10 videos for live content`);
-          const videosToCheck = channel.videos.contents.slice(0, 10);
+        // Method 4: Get channel and look for live videos (final attempt)
+        if (Date.now() - startTime < 6000) {
+          try {
+            console.log('Trying channel approach...');
+            const channel = await Promise.race([
+              this.client.getChannel(channelId),
+              new Promise((_, reject) => setTimeout(() => reject(new Error('Channel fetch timeout')), 2000))
+            ]);
 
-          for (const video of videosToCheck) {
-            if (!video || !video.id) continue;
+            if (!channel) {
+              console.log('Channel not found');
+              return null;
+            }
 
-            const isLive = video.basic_info?.is_live;
-            const hasLiveBadge = video.badges?.some(badge =>
-              badge && badge.label && badge.label.toLowerCase().includes('live')
-            );
+            console.log('Channel retrieved, looking for live content...');
 
-            if (isLive || hasLiveBadge) {
-              const videoInfo = await this.getVideoInfo(video.id);
-              if (videoInfo && videoInfo.isLiveNow) {
-                console.log(`Confirmed live video: ${video.id}`);
-                const liveChatData = await this.getLiveChatData(video.id);
-                return {
-                  ...videoInfo,
-                  channelId: channelId,
-                  liveChatEnabled: !!liveChatData,
-                  liveChat: liveChatData
-                };
+            // Check live_streams section first
+            if (channel.live_streams && channel.live_streams.contents) {
+              console.log(`Found ${channel.live_streams.contents.length} entries in live_streams`);
+              for (const video of channel.live_streams.contents.slice(0, 3)) { // Limit to first 3
+                if (video && video.id) {
+                  console.log(`Checking live stream: ${video.id}`);
+                  const videoInfo = await this.getVideoInfo(video.id);
+                  if (videoInfo && videoInfo.isLiveNow) {
+                    console.log(`Confirmed live video: ${video.id}`);
+                    const liveChatData = await this.getLiveChatData(video.id);
+                    return {
+                      ...videoInfo,
+                      channelId: channelId,
+                      liveChatEnabled: !!liveChatData,
+                      liveChat: liveChatData
+                    };
+                  }
+                }
               }
             }
+
+            // Check regular videos section (only if we have time)
+            if (channel.videos && channel.videos.contents && Date.now() - startTime < 7000) {
+              console.log(`Checking first 5 videos for live content`);
+              const videosToCheck = channel.videos.contents.slice(0, 5); // Reduced from 10 to 5
+
+              for (const video of videosToCheck) {
+                if (!video || !video.id) continue;
+
+                const isLive = video.basic_info?.is_live;
+                const hasLiveBadge = video.badges?.some(badge =>
+                  badge && badge.label && badge.label.toLowerCase().includes('live')
+                );
+
+                if (isLive || hasLiveBadge) {
+                  const videoInfo = await this.getVideoInfo(video.id);
+                  if (videoInfo && videoInfo.isLiveNow) {
+                    console.log(`Confirmed live video: ${video.id}`);
+                    const liveChatData = await this.getLiveChatData(video.id);
+                    return {
+                      ...videoInfo,
+                      channelId: channelId,
+                      liveChatEnabled: !!liveChatData,
+                      liveChat: liveChatData
+                    };
+                  }
+                }
+              }
+            }
+
+            console.log(`No live content found in channel (total time: ${Date.now() - startTime}ms)`);
+            return null;
+
+          } catch (channelError) {
+            console.log('Channel method failed:', channelError.message);
+            return null;
           }
         }
 
-        console.log(`No live content found in channel (total time: ${Date.now() - startTime}ms)`);
         return null;
+      };
 
-      } catch (channelError) {
-        console.log('Channel method failed:', channelError.message);
-        return null;
-      }
+      // Race the main logic against the global timeout
+      return await Promise.race([
+        checkLiveInfo(),
+        globalTimeoutPromise
+      ]);
 
     } catch (error) {
       console.error(`Failed to get channel live info for ${channelId}:`, error.message);
@@ -322,14 +383,14 @@ class InnerTubeHelper {
     try {
       console.log(`Checking live page for: ${channelId}`);
 
-      // Try different approaches to get the live page video
+      // Try different approaches to get the live page video with shorter timeouts
       const livePageUrl = `https://www.youtube.com/channel/${channelId}/live`;
 
       try {
-        // Method 1: Try getBasicInfo
+        // Method 1: Try getBasicInfo with fast timeout
         const livePageResponse = await Promise.race([
           this.client.getBasicInfo(livePageUrl),
-          new Promise((_, reject) => setTimeout(() => reject(new Error('Live page getBasicInfo timeout')), 3000))
+          new Promise((_, reject) => setTimeout(() => reject(new Error('Live page getBasicInfo timeout')), 1200))
         ]);
 
         if (livePageResponse && livePageResponse.basic_info && livePageResponse.basic_info.id) {
@@ -341,10 +402,10 @@ class InnerTubeHelper {
       }
 
       try {
-        // Method 2: Try resolveURL
+        // Method 2: Try resolveURL with fast timeout
         const resolvedUrl = await Promise.race([
           this.client.resolveURL(livePageUrl),
-          new Promise((_, reject) => setTimeout(() => reject(new Error('Live page resolveURL timeout')), 3000))
+          new Promise((_, reject) => setTimeout(() => reject(new Error('Live page resolveURL timeout')), 1200))
         ]);
 
         if (resolvedUrl && resolvedUrl.basic_info && resolvedUrl.basic_info.id) {
