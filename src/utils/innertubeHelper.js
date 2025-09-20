@@ -7,26 +7,38 @@ import { Innertube } from 'youtubei.js';
 class InnerTubeHelper {
   constructor() {
     this.client = null;
+    this.initPromise = null;
   }
 
   async init() {
-    if (!this.client) {
-      try {
-        console.log('Initializing Innertube client...');
-        // Add timeout to client initialization
-        this.client = await Promise.race([
-          Innertube.create(),
-          new Promise((_, reject) =>
-            setTimeout(() => reject(new Error('Innertube client initialization timeout')), 3000)
-          )
-        ]);
-        console.log('Innertube client initialized successfully');
-      } catch (error) {
-        console.error('Failed to initialize Innertube client:', error.message);
-        throw error;
-      }
+    if (!this.client && !this.initPromise) {
+      this.initPromise = this._initializeClient();
     }
+
+    if (this.initPromise) {
+      await this.initPromise;
+    }
+
     return this.client;
+  }
+
+  async _initializeClient() {
+    try {
+      console.log('Initializing Innertube client...');
+      // Add timeout to client initialization
+      this.client = await Promise.race([
+        Innertube.create(),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('Innertube client initialization timeout')), 3000)
+        )
+      ]);
+      console.log('Innertube client initialized successfully');
+      this.initPromise = null; // Clear the promise after successful initialization
+    } catch (error) {
+      console.error('Failed to initialize Innertube client:', error.message);
+      this.initPromise = null; // Clear the promise on error so it can be retried
+      throw error;
+    }
   }
 
   async getLiveInfo(channelId, videoId = null, channelHandle = null) {
