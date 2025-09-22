@@ -25,14 +25,31 @@ class InnerTubeHelper {
   async _initializeClient() {
     try {
       console.log('Initializing Innertube client...');
+
+      // YouTube consent cookies for cloud environments
+      const youtubeCookies = process.env.YOUTUBE_COOKIES ||
+        'YSC=VYj-r2qqIuQ; VISITOR_PRIVACY_METADATA=CgJFUxIhEh0SGwsMDg8QERITFBUWFxgZGhscHR4fICEiIyQlJiA2; PREF=f6=40000000&tz=Europe.Madrid; __Secure-YEC=CgszTjg0M2w2TVBfVSi7mMXGBjInCgJFUxIhEh0SGwsMDg8QERITFBUWFxgZGhscHR4fICEiIyQlJiA2';
+
+      // Configure Innertube with cookies and enhanced headers
+      const innertubeConfig = {
+        visitor_data: undefined,
+        enable_session_cache: false,
+        language: 'en',
+        location: 'ES', // Spain
+        cookie: youtubeCookies
+      };
+
+      console.log('Creating Innertube client with Spanish locale and consent cookies...');
+
       // Add timeout to client initialization
       this.client = await Promise.race([
-        Innertube.create(),
+        Innertube.create(innertubeConfig),
         new Promise((_, reject) =>
-          setTimeout(() => reject(new Error('Innertube client initialization timeout')), 3000)
+          setTimeout(() => reject(new Error('Innertube client initialization timeout')), 5000)
         )
       ]);
-      console.log('Innertube client initialized successfully');
+
+      console.log('Innertube client initialized successfully with cookies');
       this.initPromise = null; // Clear the promise after successful initialization
     } catch (error) {
       console.error('Failed to initialize Innertube client:', error.message);

@@ -9,8 +9,15 @@ class WebScrapingHelper {
     this.userAgents = [
       'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
       'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-      'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
+      'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
+      'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
+      'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:126.0) Gecko/20100101 Firefox/126.0'
     ];
+
+    // YouTube consent cookies for Madrid/Spain region
+    this.youtubeCookies = process.env.YOUTUBE_COOKIES ||
+      'YSC=VYj-r2qqIuQ; VISITOR_PRIVACY_METADATA=CgJFUxIhEh0SGwsMDg8QERITFBUWFxgZGhscHR4fICEiIyQlJiA2; PREF=f6=40000000&tz=Europe.Madrid; __Secure-YEC=CgszTjg0M2w2TVBfVSi7mMXGBjInCgJFUxIhEh0SGwsMDg8QERITFBUWFxgZGhscHR4fICEiIyQlJiA2';
   }
 
   getRandomUserAgent() {
@@ -26,10 +33,16 @@ class WebScrapingHelper {
           headers: {
             'User-Agent': this.getRandomUserAgent(),
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-            'Accept-Language': 'en-US,en;q=0.5',
+            'Accept-Language': 'es-ES,es;q=0.9,en;q=0.8',
             'Accept-Encoding': 'gzip, deflate, br',
             'Connection': 'keep-alive',
             'Upgrade-Insecure-Requests': '1',
+            'Cookie': this.youtubeCookies,
+            'DNT': '1',
+            'Sec-Fetch-Dest': 'document',
+            'Sec-Fetch-Mode': 'navigate',
+            'Sec-Fetch-Site': 'none',
+            'Sec-GPC': '1',
             ...options.headers
           },
           ...options
@@ -247,6 +260,54 @@ class WebScrapingHelper {
               }
 
               if (isLive) {
+                // Extract additional metadata from the same data object
+                let thumbnails = [];
+                let description = null;
+                let duration = null;
+                let tags = [];
+
+                // Extract thumbnails
+                if (data.videoDetails && data.videoDetails.thumbnail && data.videoDetails.thumbnail.thumbnails) {
+                  thumbnails = data.videoDetails.thumbnail.thumbnails.map(t => ({
+                    url: t.url,
+                    width: t.width,
+                    height: t.height
+                  }));
+                }
+
+                // Extract description
+                if (data.videoDetails && data.videoDetails.shortDescription) {
+                  description = data.videoDetails.shortDescription.substring(0, 300);
+                }
+
+                // Extract tags/keywords
+                if (data.videoDetails && data.videoDetails.keywords) {
+                  tags = data.videoDetails.keywords.slice(0, 20);
+                }
+
+                // Calculate live duration if start time is available
+                let liveDuration = null;
+                let liveDurationSeconds = null;
+                if (data.microformat && data.microformat.playerMicroformatRenderer) {
+                  const microformat = data.microformat.playerMicroformatRenderer;
+                  const startTime = microformat.liveBroadcastDetails?.startTimestamp;
+                  if (startTime) {
+                    const startDate = new Date(startTime);
+                    const now = new Date();
+                    liveDurationSeconds = Math.floor((now - startDate) / 1000);
+
+                    const hours = Math.floor(liveDurationSeconds / 3600);
+                    const minutes = Math.floor((liveDurationSeconds % 3600) / 60);
+                    const seconds = liveDurationSeconds % 60;
+
+                    if (hours > 0) {
+                      liveDuration = `${hours}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+                    } else {
+                      liveDuration = `${minutes}:${seconds.toString().padStart(2, '0')}`;
+                    }
+                  }
+                }
+
                 return {
                   method: 'webscraping',
                   videoId: videoId,
@@ -254,7 +315,15 @@ class WebScrapingHelper {
                   channelName: channelName,
                   isLiveNow: true,
                   concurrentViewers: viewCount ? parseInt(viewCount) : null,
-                  isLiveContent: true
+                  viewerCountType: 'concurrent_viewers',
+                  thumbnails: thumbnails,
+                  description: description,
+                  isLiveContent: true,
+                  duration: duration,
+                  liveDuration: liveDuration,
+                  liveDurationSeconds: liveDurationSeconds,
+                  tags: tags,
+                  actualStartTime: data.microformat?.playerMicroformatRenderer?.liveBroadcastDetails?.startTimestamp || null
                 };
               }
             }
@@ -292,7 +361,15 @@ class WebScrapingHelper {
         channelName: channelName,
         isLiveNow: isLive,
         concurrentViewers: viewCount ? parseInt(viewCount) : null,
-        isLiveContent: isLive
+        viewerCountType: isLive ? 'concurrent_viewers' : 'total_views',
+        thumbnails: [],
+        description: null,
+        isLiveContent: isLive,
+        duration: null,
+        liveDuration: null,
+        liveDurationSeconds: null,
+        tags: [],
+        actualStartTime: null
       };
 
     } catch (error) {
