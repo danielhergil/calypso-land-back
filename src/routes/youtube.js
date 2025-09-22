@@ -393,6 +393,83 @@ router.get('/quick-status/:channelId',
   }
 );
 
+// New endpoint: Batch video metadata retrieval
+router.post('/batch/videos',
+  strictRateLimiter,
+  async (req, res, next) => {
+    try {
+      const { videoIds } = req.body;
+
+      if (!Array.isArray(videoIds) || videoIds.length === 0) {
+        return res.status(400).json({
+          success: false,
+          error: 'videoIds must be a non-empty array'
+        });
+      }
+
+      if (videoIds.length > 20) {
+        return res.status(400).json({
+          success: false,
+          error: 'Maximum 20 videos per batch request'
+        });
+      }
+
+      const results = {};
+      const promises = videoIds.map(async (videoId) => {
+        try {
+          const cacheKey = cacheService.generateKey('video', videoId);
+          const metadata = await cacheService.getOrSet(
+            cacheKey,
+            () => youtubeService.getLiveMetadata(null, videoId),
+            300
+          );
+
+          if (metadata) {
+            results[videoId] = {
+              success: true,
+              data: metadata,
+              cached: cacheService.get(cacheKey) !== null
+            };
+          } else {
+            results[videoId] = {
+              success: false,
+              error: 'Video not found or unavailable',
+              data: null
+            };
+          }
+        } catch (error) {
+          results[videoId] = {
+            success: false,
+            error: error.message,
+            data: null
+          };
+        }
+      });
+
+      await Promise.all(promises);
+
+      logger.info({
+        message: 'Batch video metadata retrieval completed',
+        videoCount: videoIds.length,
+        successCount: Object.values(results).filter(r => r.success).length
+      });
+
+      res.json({
+        success: true,
+        results,
+        summary: {
+          total: videoIds.length,
+          successful: Object.values(results).filter(r => r.success).length,
+          failed: Object.values(results).filter(r => !r.success).length
+        },
+        timestamp: new Date().toISOString()
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+);
+
 // New endpoint: Clear cache
 router.post('/cache/clear', (req, res) => {
   cacheService.flush();

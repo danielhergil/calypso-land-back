@@ -50,7 +50,8 @@ app.get('/', (req, res) => {
       statusVideo: '/api/status/video/:videoId (check if live)',
       statusChannel: '/api/status/channel/:channelId (check if live)',
       statusBatch: '/api/status/batch/videos (check multiple videos)',
-      statusBatchChannels: '/api/status/batch/channels (check multiple channels)',
+      statusBatchChannels: '/api/status/batch/channels (check multiple channels with video data)',
+      batchVideos: '/api/youtube/batch/videos (get multiple video metadata)',
       quickStatus: '/api/youtube/quick-status/:channelId (ultra-fast YTDL status)',
       health: '/api/youtube/health',
       clearCache: '/api/youtube/cache/clear (POST)'

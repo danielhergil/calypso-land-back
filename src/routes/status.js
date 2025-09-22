@@ -250,7 +250,7 @@ async function getChannelLiveStatusDirect(channelId) {
   }
 }
 
-// Batch status check for multiple channels
+// Batch status check for multiple channels with full video information for live channels
 router.post('/batch/channels',
   strictRateLimiter,
   async (req, res, next) => {
@@ -271,11 +271,12 @@ router.post('/batch/channels',
         });
       }
 
-      const results = {};
-      const promises = channelIds.map(async (channelId) => {
+      // Step 1: Check which channels are live and get their video IDs
+      const channelResults = {};
+      const channelPromises = channelIds.map(async (channelId) => {
         try {
           const result = await getChannelLiveStatusDirect(channelId);
-          results[channelId] = {
+          channelResults[channelId] = {
             isLive: result.isLive,
             liveVideoId: result.liveVideoId,
             title: result.title,
@@ -283,7 +284,7 @@ router.post('/batch/channels',
             method: result.method
           };
         } catch (error) {
-          results[channelId] = {
+          channelResults[channelId] = {
             isLive: false,
             liveVideoId: null,
             title: null,
@@ -294,22 +295,92 @@ router.post('/batch/channels',
         }
       });
 
-      await Promise.all(promises);
+      await Promise.all(channelPromises);
+
+      // Step 2: Collect video IDs from live channels
+      const liveVideoIds = Object.values(channelResults)
+        .filter(result => result.isLive && result.liveVideoId)
+        .map(result => result.liveVideoId);
+
+      // Step 3: Get full video information for live videos
+      const videoResults = {};
+      if (liveVideoIds.length > 0) {
+        const videoPromises = liveVideoIds.map(async (videoId) => {
+          try {
+            const cacheKey = cacheService.generateKey('video', videoId);
+            const metadata = await cacheService.getOrSet(
+              cacheKey,
+              () => youtubeService.getLiveMetadata(null, videoId),
+              300
+            );
+
+            if (metadata) {
+              videoResults[videoId] = {
+                success: true,
+                data: metadata,
+                cached: cacheService.get(cacheKey) !== null
+              };
+            } else {
+              videoResults[videoId] = {
+                success: false,
+                error: 'Video not found or unavailable',
+                data: null
+              };
+            }
+          } catch (error) {
+            videoResults[videoId] = {
+              success: false,
+              error: error.message,
+              data: null
+            };
+          }
+        });
+
+        await Promise.all(videoPromises);
+      }
+
+      // Step 4: Build final response with video information for live channels
+      const finalResults = {};
+      for (const [channelId, channelResult] of Object.entries(channelResults)) {
+        if (channelResult.isLive && channelResult.liveVideoId) {
+          const videoData = videoResults[channelResult.liveVideoId];
+          finalResults[channelId] = {
+            isLive: true,
+            liveVideoId: channelResult.liveVideoId,
+            videoData: videoData?.success ? videoData.data : null,
+            videoError: videoData?.success ? null : videoData?.error,
+            method: channelResult.method
+          };
+        } else {
+          finalResults[channelId] = {
+            isLive: false,
+            liveVideoId: null,
+            videoData: null,
+            videoError: null,
+            method: channelResult.method,
+            error: channelResult.error || null
+          };
+        }
+      }
+
+      const liveCount = Object.values(finalResults).filter(r => r.isLive).length;
 
       logger.info({
-        message: 'Batch channel status check completed',
+        message: 'Batch channel status check with video info completed',
         channelCount: channelIds.length,
-        liveCount: Object.values(results).filter(r => r.isLive).length
+        liveCount,
+        videoDataFetched: liveVideoIds.length
       });
 
       res.json({
         success: true,
-        results,
+        results: finalResults,
         summary: {
           total: channelIds.length,
-          live: Object.values(results).filter(r => r.isLive).length,
-          notLive: Object.values(results).filter(r => !r.isLive && !r.error).length,
-          errors: Object.values(results).filter(r => r.error).length
+          live: liveCount,
+          notLive: Object.values(finalResults).filter(r => !r.isLive && !r.error).length,
+          errors: Object.values(finalResults).filter(r => r.error).length,
+          videoDataFetched: liveVideoIds.length
         },
         quotaUsed: 0,
         timestamp: new Date().toISOString()
