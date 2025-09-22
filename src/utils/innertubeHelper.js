@@ -297,6 +297,9 @@ class InnerTubeHelper {
             // Check regular videos section (more aggressively if no live_streams section)
             const maxVideosToCheck = channel.live_streams ? 5 : 10; // More videos if no live_streams
             const timeLimit = channel.live_streams ? 7000 : 10000; // More time if no live_streams
+            const timeRemaining = timeLimit - (Date.now() - startTime);
+
+            console.log(`Video section debug: videos=${!!channel.videos}, contents=${!!channel.videos?.contents}, count=${channel.videos?.contents?.length || 0}, timeRemaining=${timeRemaining}ms`);
 
             if (channel.videos && channel.videos.contents && Date.now() - startTime < timeLimit) {
               console.log(`Checking first ${maxVideosToCheck} videos for live content (live_streams available: ${!!channel.live_streams})`);
