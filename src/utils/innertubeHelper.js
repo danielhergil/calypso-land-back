@@ -361,7 +361,26 @@ class InnerTubeHelper {
             }
 
             console.log(`No live content found in channel (total time: ${Date.now() - startTime}ms)`);
-            return null;
+
+            // Return a proper "not live" response instead of null to prevent fallback to web scraping
+            return {
+              method: 'innertube',
+              videoId: null,
+              title: null,
+              channelName: null,
+              channelId: channelId,
+              isLiveNow: false,
+              concurrentViewers: null,
+              viewerCountType: 'not_live',
+              thumbnails: [],
+              description: null,
+              isLiveContent: false,
+              duration: null,
+              liveDuration: null,
+              liveDurationSeconds: null,
+              tags: [],
+              actualStartTime: null
+            };
 
           } catch (channelError) {
             console.log('Channel method failed:', channelError.message);
@@ -369,7 +388,25 @@ class InnerTubeHelper {
           }
         }
 
-        return null;
+        // Return "not live" response when all methods are exhausted but channel was accessible
+        return {
+          method: 'innertube',
+          videoId: null,
+          title: null,
+          channelName: null,
+          channelId: channelId,
+          isLiveNow: false,
+          concurrentViewers: null,
+          viewerCountType: 'not_live',
+          thumbnails: [],
+          description: null,
+          isLiveContent: false,
+          duration: null,
+          liveDuration: null,
+          liveDurationSeconds: null,
+          tags: [],
+          actualStartTime: null
+        };
       };
 
       // Race the main logic against the global timeout

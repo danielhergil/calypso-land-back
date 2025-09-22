@@ -63,8 +63,10 @@ class YouTubeService {
           console.log('✅ Innertube detected live stream:', result.videoId);
           this.setCacheAndReturn(cacheKey, result);
           return result;
-        } else if (result) {
-          console.log('Innertube found channel but no live stream');
+        } else if (result && result.method === 'innertube') {
+          console.log('✅ Innertube found channel but no live stream - returning result');
+          this.setCacheAndReturn(cacheKey, result);
+          return result;
         } else {
           console.log('Innertube returned null result');
         }
