@@ -1,4 +1,5 @@
 import ytdl from 'ytdl-core';
+import webScrapingHelper from './webScrapingHelper.js';
 
 /**
  * YTDL-Core Helper - Fast status checking
@@ -9,16 +10,32 @@ class YTDLHelper {
     // No client initialization needed
   }
 
+  buildRequestConfig(target) {
+    const isAbsoluteUrl = /^https?:\/\//i.test(target);
+    const baseUrl = isAbsoluteUrl ? target : `https://www.youtube.com/watch?v=${target}`;
+    const { url, headers } = webScrapingHelper.buildYoutubeRequest(baseUrl);
+
+    return {
+      url,
+      options: {
+        requestOptions: {
+          headers
+        }
+      }
+    };
+  }
+
   async isChannelLive(channelId) {
     try {
       console.log(`YTDL: Checking if channel ${channelId} is live...`);
 
       // Try to get channel live page directly
       const liveUrl = `https://www.youtube.com/channel/${channelId}/live`;
+      const requestConfig = this.buildRequestConfig(liveUrl);
 
       // Use ytdl to check if the live URL redirects to a video
       const isLive = await Promise.race([
-        this.checkLiveUrl(liveUrl),
+        this.checkLiveUrl(requestConfig),
         new Promise((_, reject) =>
           setTimeout(() => reject(new Error('YTDL timeout')), 3000)
         )
@@ -32,13 +49,13 @@ class YTDLHelper {
     }
   }
 
-  async checkLiveUrl(liveUrl) {
+  async checkLiveUrl(requestConfig) {
     try {
       // Try to validate the live URL - if it's live, it should redirect to a video
-      const isValid = await ytdl.validateURL(liveUrl);
+      const isValid = await ytdl.validateURL(requestConfig.url);
       if (isValid) {
         // If the live URL is valid, try to get basic info
-        const info = await ytdl.getBasicInfo(liveUrl);
+        const info = await ytdl.getBasicInfo(requestConfig.url, requestConfig.options);
 
         // Check if it's actually live
         const isLive = info?.videoDetails?.isLiveContent &&
@@ -50,14 +67,14 @@ class YTDLHelper {
       return false;
     } catch (error) {
       // If we can't get info, try alternative approach
-      return await this.checkLiveByVideoId(liveUrl);
+      return await this.checkLiveByVideoId(requestConfig);
     }
   }
 
-  async checkLiveByVideoId(liveUrl) {
+  async checkLiveByVideoId(requestConfig) {
     try {
       // Extract video ID if the live URL redirected to a video
-      const videoInfo = await ytdl.getInfo(liveUrl);
+      const videoInfo = await ytdl.getInfo(requestConfig.url, requestConfig.options);
 
       if (videoInfo?.videoDetails) {
         const isLive = videoInfo.videoDetails.isLiveContent &&
@@ -78,10 +95,11 @@ class YTDLHelper {
       console.log(`YTDL: Getting live video ID for channel ${channelId}`);
 
       const liveUrl = `https://www.youtube.com/channel/${channelId}/live`;
+      const requestConfig = this.buildRequestConfig(liveUrl);
 
       // Try to get the video info from live URL
       const videoInfo = await Promise.race([
-        ytdl.getInfo(liveUrl),
+        ytdl.getInfo(requestConfig.url, requestConfig.options),
         new Promise((_, reject) =>
           setTimeout(() => reject(new Error('YTDL getInfo timeout')), 2000)
         )
@@ -116,8 +134,10 @@ class YTDLHelper {
       }
 
       // Get basic video info
+      const videoRequest = this.buildRequestConfig(videoId);
+
       const info = await Promise.race([
-        ytdl.getBasicInfo(videoId),
+        ytdl.getBasicInfo(videoRequest.url, videoRequest.options),
         new Promise((_, reject) =>
           setTimeout(() => reject(new Error('YTDL basic info timeout')), 2000)
         )
