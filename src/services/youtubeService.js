@@ -20,9 +20,9 @@ class YouTubeService {
       this.cache.delete(cacheKey);
     }
 
-    // Set overall timeout for the entire operation (max 6 seconds)
+    // Set overall timeout for the entire operation (max 12 seconds for Cloud Run)
     const globalTimeout = new Promise((_, reject) =>
-      setTimeout(() => reject(new Error('Service timeout - channel likely offline')), 6000)
+      setTimeout(() => reject(new Error('Service timeout - channel likely offline')), 12000)
     );
 
     const checkMethods = async () => {
@@ -51,7 +51,7 @@ class YouTubeService {
         console.log('Trying Innertube method...');
         result = await Promise.race([
           innertubeHelper.getLiveInfo(channelId, videoId, channelHandle),
-          new Promise((_, reject) => setTimeout(() => reject(new Error('Innertube timeout')), 4000))
+          new Promise((_, reject) => setTimeout(() => reject(new Error('Innertube timeout')), 8000))
         ]);
         if (result && result.isLiveNow) {
           console.log('Innertube detected live stream');
