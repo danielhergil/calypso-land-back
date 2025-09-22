@@ -1,20 +1,122 @@
 import * as cheerio from 'cheerio';
 
+const DEFAULT_USER_AGENTS = [
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
+];
+
+const DEFAULT_CONSENT_COOKIE = 'CONSENT=YES+1';
+
+export const YOUTUBE_DEFAULT_QUERY_PARAMS = Object.freeze({
+  hl: 'en',
+  gl: 'US'
+});
+
+const getEnvCookieValue = envVar => {
+  const value = process.env[envVar];
+  return typeof value === 'string' ? value.trim() : '';
+};
+
+export const getYoutubeCookieString = () => {
+  const cookies = [];
+  const consentCookie = getEnvCookieValue('YOUTUBE_CONSENT_COOKIE') || DEFAULT_CONSENT_COOKIE;
+  cookies.push(consentCookie);
+
+  const socsCookie = getEnvCookieValue('YOUTUBE_SOCS_COOKIE');
+  if (socsCookie) {
+    cookies.push(socsCookie);
+  }
+
+  const prefCookie = getEnvCookieValue('YOUTUBE_PREF_COOKIE');
+  if (prefCookie) {
+    cookies.push(prefCookie);
+  }
+
+  return cookies.filter(Boolean).join('; ');
+};
+
+export const appendYoutubeQueryParams = inputUrl => {
+  if (!inputUrl) {
+    return inputUrl;
+  }
+
+  try {
+    const url = new URL(inputUrl);
+    Object.entries(YOUTUBE_DEFAULT_QUERY_PARAMS).forEach(([key, value]) => {
+      if (!url.searchParams.has(key)) {
+        url.searchParams.set(key, value);
+      }
+    });
+    return url.toString();
+  } catch (error) {
+    return inputUrl;
+  }
+};
+
+export const buildYoutubeHeaders = ({ userAgent, headers = {} } = {}) => {
+  const sanitizedHeaders = { ...headers };
+  const existingCookie = sanitizedHeaders.Cookie || sanitizedHeaders.cookie;
+  delete sanitizedHeaders.Cookie;
+  delete sanitizedHeaders.cookie;
+
+  const finalHeaders = {
+    Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+    'Accept-Language': 'en-US,en;q=0.5',
+    'Accept-Encoding': 'gzip, deflate, br',
+    Connection: 'keep-alive',
+    'Upgrade-Insecure-Requests': '1'
+  };
+
+  if (userAgent) {
+    finalHeaders['User-Agent'] = userAgent;
+  }
+
+  Object.entries(sanitizedHeaders).forEach(([key, value]) => {
+    finalHeaders[key] = value;
+  });
+
+  if (!finalHeaders['User-Agent']) {
+    finalHeaders['User-Agent'] = DEFAULT_USER_AGENTS[0];
+  }
+
+  const cookieParts = [getYoutubeCookieString()];
+  if (existingCookie) {
+    cookieParts.push(existingCookie);
+  }
+
+  const cookieHeader = cookieParts.filter(Boolean).join('; ');
+  if (cookieHeader) {
+    finalHeaders.Cookie = cookieHeader;
+  }
+
+  return finalHeaders;
+};
+
 /**
  * Web Scraping Helper for YouTube Live Detection
  * More reliable than Innertube for detecting live streams
  */
 class WebScrapingHelper {
   constructor() {
-    this.userAgents = [
-      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-      'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-      'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
-    ];
+    this.userAgents = DEFAULT_USER_AGENTS;
   }
 
   getRandomUserAgent() {
     return this.userAgents[Math.floor(Math.random() * this.userAgents.length)];
+  }
+
+  buildYoutubeRequest(url, headers = {}) {
+    const requestUrl = appendYoutubeQueryParams(url);
+    const finalHeaders = buildYoutubeHeaders({
+      userAgent: this.getRandomUserAgent(),
+      headers
+    });
+
+    return {
+      url: requestUrl,
+      headers: finalHeaders
+    };
   }
 
   async fetchWithRetry(url, options = {}, maxRetries = 3) {
@@ -22,17 +124,12 @@ class WebScrapingHelper {
       try {
         console.log(`Fetching ${url} (attempt ${attempt}/${maxRetries})`);
 
-        const response = await fetch(url, {
-          headers: {
-            'User-Agent': this.getRandomUserAgent(),
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-            'Accept-Language': 'en-US,en;q=0.5',
-            'Accept-Encoding': 'gzip, deflate, br',
-            'Connection': 'keep-alive',
-            'Upgrade-Insecure-Requests': '1',
-            ...options.headers
-          },
-          ...options
+        const { headers: optionHeaders = {}, ...restOptions } = options;
+        const { url: requestUrl, headers } = this.buildYoutubeRequest(url, optionHeaders);
+
+        const response = await fetch(requestUrl, {
+          ...restOptions,
+          headers
         });
 
         if (!response.ok) {
