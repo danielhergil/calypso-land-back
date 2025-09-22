@@ -85,7 +85,7 @@ class WebScrapingHelper {
         const livePageUrl = `https://www.youtube.com/channel/${channelId}/live`;
         console.log(`Checking live page: ${livePageUrl}`);
 
-        const response = await this.fetchWithRetry(livePageUrl, { timeout: 10000 });
+        const response = await this.fetchWithRetry(livePageUrl, { timeout: 15000 });
         const html = await response.text();
 
         // Check if redirected to a video (indicates live stream)
@@ -137,7 +137,7 @@ class WebScrapingHelper {
         const channelUrl = `https://www.youtube.com/channel/${channelId}/videos`;
         console.log(`Checking channel videos: ${channelUrl}`);
 
-        const response = await this.fetchWithRetry(channelUrl, { timeout: 10000 });
+        const response = await this.fetchWithRetry(channelUrl, { timeout: 15000 });
         const html = await response.text();
         const $ = cheerio.load(html);
 
@@ -194,7 +194,7 @@ class WebScrapingHelper {
       console.log(`Getting video info for: ${videoId}`);
       const videoUrl = `https://www.youtube.com/watch?v=${videoId}`;
 
-      const response = await this.fetchWithRetry(videoUrl, { timeout: 10000 });
+      const response = await this.fetchWithRetry(videoUrl, { timeout: 15000 });
       const html = await response.text();
       const $ = cheerio.load(html);
 
@@ -219,22 +219,29 @@ class WebScrapingHelper {
           try {
             // Try to extract ytInitialPlayerResponse
             let dataMatch = scriptContent.match(/ytInitialPlayerResponse":\s*({.+?})(?=,"ytInitialData"|$)/);
+            let dataSource = 'ytInitialPlayerResponse';
+
             if (!dataMatch) {
               // Try ytInitialData
               dataMatch = scriptContent.match(/ytInitialData":\s*({.+?})\s*;/);
+              dataSource = 'ytInitialData';
             }
             if (!dataMatch) {
               // Try window.ytInitialData
               dataMatch = scriptContent.match(/window\.ytInitialData\s*=\s*({.+?});/);
+              dataSource = 'window.ytInitialData';
             }
             if (!dataMatch) {
               // Try var ytInitialData
               dataMatch = scriptContent.match(/var ytInitialData\s*=\s*({.+?});/);
+              dataSource = 'var ytInitialData';
             }
 
             if (dataMatch) {
+              console.log(`Video ${videoId}: Found ${dataSource}, parsing data...`);
               const jsonStr = dataMatch[1];
               const data = JSON.parse(jsonStr);
+              console.log(`Video ${videoId}: Successfully parsed JSON data`);
 
               // Check videoDetails first
               if (data.videoDetails) {
@@ -334,10 +341,34 @@ class WebScrapingHelper {
               isLive = true;
             }
 
+            // Additional live indicators for robust detection
+            if (!isLive) {
+              const livePatterns = [
+                /"isLiveNow"\s*:\s*true/,
+                /"isLive"\s*:\s*true/,
+                /"liveBroadcastContent"\s*:\s*"live"/,
+                /"hlsManifestUrl"\s*:\s*"[^"]+"/,
+                /"dashManifestUrl"\s*:\s*"[^"]+"/
+              ];
+
+              for (const pattern of livePatterns) {
+                if (pattern.test(scriptContent)) {
+                  console.log(`Video ${videoId}: found live pattern: ${pattern.source}`);
+                  isLive = true;
+                  break;
+                }
+              }
+            }
+
+            console.log(`Video ${videoId}: Final live status: ${isLive}`);
+
           } catch (parseError) {
             console.log(`Failed to parse video data JSON for ${videoId}:`, parseError.message);
+            console.log(`Video ${videoId}: Will try fallback detection methods`);
             // Continue to fallback methods
           }
+        } else {
+          console.log(`Video ${videoId}: No YouTube data structures found in script`);
         }
       }
 

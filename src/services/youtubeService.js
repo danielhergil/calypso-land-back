@@ -1,6 +1,7 @@
 import innertubeHelper from '../utils/innertubeHelper.js';
 import webScrapingHelper from '../utils/webScrapingHelper.js';
 import ytdlHelper from '../utils/ytdlHelper.js';
+import ytdlpHelper from '../utils/ytdlpHelper.js';
 
 class YouTubeService {
   constructor() {
@@ -64,9 +65,14 @@ class YouTubeService {
           this.setCacheAndReturn(cacheKey, result);
           return result;
         } else if (result && result.method === 'innertube') {
-          console.log('✅ Innertube found channel but no live stream - returning result');
-          this.setCacheAndReturn(cacheKey, result);
-          return result;
+          // For video metadata requests, check if Innertube returned empty data
+          if (videoId && (!result.title || !result.channelName)) {
+            console.log('Innertube returned minimal data for video, will try yt-dlp');
+          } else {
+            console.log('✅ Innertube found channel but no live stream - returning result');
+            this.setCacheAndReturn(cacheKey, result);
+            return result;
+          }
         } else {
           console.log('Innertube returned null result');
         }
@@ -81,12 +87,30 @@ class YouTubeService {
         }
       }
 
-      // Method 3: Try web scraping as final fallback
+      // Method 3: Try yt-dlp for video metadata (when videoId is available)
+      if (videoId) {
+        try {
+          console.log('Trying yt-dlp method for video metadata...');
+          result = await Promise.race([
+            ytdlpHelper.getVideoInfo(videoId),
+            new Promise((_, reject) => setTimeout(() => reject(new Error('YT-DLP timeout')), 20000))
+          ]);
+          if (result) {
+            console.log(`✅ YT-DLP result: live=${result.isLiveNow}, title="${result.title}"`);
+            this.setCacheAndReturn(cacheKey, result);
+            return result;
+          }
+        } catch (error) {
+          console.warn('YT-DLP method failed:', error.message);
+        }
+      }
+
+      // Method 4: Try web scraping as final fallback
       try {
         console.log('Trying web scraping method...');
         result = await Promise.race([
           webScrapingHelper.getLiveInfo(channelId, videoId),
-          new Promise((_, reject) => setTimeout(() => reject(new Error('Web scraping timeout')), 2000))
+          new Promise((_, reject) => setTimeout(() => reject(new Error('Web scraping timeout')), 5000))
         ]);
         if (result) {
           console.log(`Web scraping result: live=${result.isLiveNow}`);

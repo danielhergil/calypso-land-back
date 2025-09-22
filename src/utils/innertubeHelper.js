@@ -44,23 +44,43 @@ class InnerTubeHelper {
       // Configure Innertube with enhanced settings for cloud environments
       const innertubeConfig = {
         visitor_data: undefined,
-        enable_session_cache: true, // Enable session cache for consistency
+        enable_session_cache: true,
         language: 'en',
-        location: 'ES', // Spain
+        location: 'ES',
         cookie: youtubeCookies,
-        // Add additional configuration for cloud environments
         client_name: 'WEB',
-        client_version: '2.20231219.04.00',
-        // Try to mimic a real browser session
+        client_version: '2.20250919.00.00',
+
+        // Enhanced browser mimicking for cloud environments
+        initial_cookie: youtubeCookies,
+
+        // Add session context that matches real browser behavior
         session: {
-          api_key: undefined, // Let youtubei.js handle this
           context: {
             client: {
               clientName: 'WEB',
-              clientVersion: '2.20231219.04.00',
+              clientVersion: '2.20250919.00.00',
               gl: 'ES',
               hl: 'en',
-              userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
+              userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36',
+              originalUrl: 'https://www.youtube.com/',
+              platform: 'DESKTOP',
+              clientFormFactor: 'UNKNOWN_FORM_FACTOR',
+              browserName: 'Chrome',
+              browserVersion: '127.0.0.0',
+              osName: 'Windows',
+              osVersion: '10.0',
+              screenPixelDensity: 1,
+              screenDensityFloat: 1,
+              utcOffsetMinutes: 120
+            },
+            user: {
+              lockedSafetyMode: false
+            },
+            request: {
+              useSsl: true,
+              internalExperimentFlags: [],
+              consistencyTokenJars: []
             }
           }
         }
