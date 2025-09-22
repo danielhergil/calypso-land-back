@@ -4,7 +4,7 @@ dotenv.config();
 
 export const config = {
   NODE_ENV: process.env.NODE_ENV || 'development',
-  PORT: parseInt(process.env.PORT) || 3001,
+  PORT: parseInt(process.env.PORT) || 8080, // Cloud Run uses PORT 8080
   CORS_ORIGIN: process.env.CORS_ORIGIN || 'http://localhost:3000',
   CACHE_TTL: parseInt(process.env.CACHE_TTL) || 300,
   RATE_LIMIT_WINDOW: parseInt(process.env.RATE_LIMIT_WINDOW) || 15 * 60 * 1000,
