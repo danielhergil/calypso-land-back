@@ -270,6 +270,8 @@ class InnerTubeHelper {
             }
 
             console.log('Channel retrieved, looking for live content...');
+            console.log(`Channel sections available: ${Object.keys(channel).join(', ')}`);
+            console.log(`Live streams section: ${!!channel.live_streams}, Videos section: ${!!channel.videos}`);
 
             // Check live_streams section first
             if (channel.live_streams && channel.live_streams.contents) {
@@ -292,10 +294,13 @@ class InnerTubeHelper {
               }
             }
 
-            // Check regular videos section (only if we have time)
-            if (channel.videos && channel.videos.contents && Date.now() - startTime < 7000) {
-              console.log(`Checking first 5 videos for live content`);
-              const videosToCheck = channel.videos.contents.slice(0, 5); // Reduced from 10 to 5
+            // Check regular videos section (more aggressively if no live_streams section)
+            const maxVideosToCheck = channel.live_streams ? 5 : 10; // More videos if no live_streams
+            const timeLimit = channel.live_streams ? 7000 : 10000; // More time if no live_streams
+
+            if (channel.videos && channel.videos.contents && Date.now() - startTime < timeLimit) {
+              console.log(`Checking first ${maxVideosToCheck} videos for live content (live_streams available: ${!!channel.live_streams})`);
+              const videosToCheck = channel.videos.contents.slice(0, maxVideosToCheck);
 
               for (const video of videosToCheck) {
                 if (!video || !video.id) continue;
