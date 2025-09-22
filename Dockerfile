@@ -12,6 +12,9 @@ RUN apk add --no-cache python3 py3-pip ffmpeg curl git && \
 # Add virtual environment to PATH
 ENV PATH="/opt/venv/bin:$PATH"
 
+# Set Node.js options to enable experimental features for undici compatibility
+ENV NODE_OPTIONS="--experimental-global-webcrypto --experimental-fetch"
+
 # Copy package files
 COPY package*.json ./
 
