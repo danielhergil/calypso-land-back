@@ -1,5 +1,4 @@
 import { Innertube } from 'youtubei.js';
-import webScrapingHelper, { getYoutubeCookieString, YOUTUBE_DEFAULT_QUERY_PARAMS } from './webScrapingHelper.js';
 
 /**
  * InnerTube.js Helper - Uses YouTube's internal API
@@ -27,19 +26,8 @@ class InnerTubeHelper {
     try {
       console.log('Initializing Innertube client...');
       // Add timeout to client initialization
-      const innertubeOptions = {
-        lang: YOUTUBE_DEFAULT_QUERY_PARAMS.hl,
-        location: YOUTUBE_DEFAULT_QUERY_PARAMS.gl,
-        user_agent: webScrapingHelper.getRandomUserAgent()
-      };
-
-      const cookie = getYoutubeCookieString();
-      if (cookie) {
-        innertubeOptions.cookie = cookie;
-      }
-
       this.client = await Promise.race([
-        Innertube.create(innertubeOptions),
+        Innertube.create(),
         new Promise((_, reject) =>
           setTimeout(() => reject(new Error('Innertube client initialization timeout')), 3000)
         )
