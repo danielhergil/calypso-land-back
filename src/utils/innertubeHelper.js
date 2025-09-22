@@ -16,7 +16,18 @@ class InnerTubeHelper {
     }
 
     if (this.initPromise) {
-      await this.initPromise;
+      try {
+        await this.initPromise;
+      } catch (error) {
+        console.error('Innertube initialization failed during init():', error.message);
+        // Clear the failed promise so it can be retried
+        this.initPromise = null;
+        throw error;
+      }
+    }
+
+    if (!this.client) {
+      throw new Error('Innertube client not available after initialization');
     }
 
     return this.client;
@@ -41,11 +52,14 @@ class InnerTubeHelper {
 
       console.log('Creating Innertube client with Spanish locale and consent cookies...');
 
-      // Add timeout to client initialization
+      // Add timeout to client initialization with longer timeout for cloud environments
+      const initTimeout = process.env.NODE_ENV === 'production' ? 10000 : 5000;
+      console.log(`Setting Innertube initialization timeout to ${initTimeout}ms`);
+
       this.client = await Promise.race([
         Innertube.create(innertubeConfig),
         new Promise((_, reject) =>
-          setTimeout(() => reject(new Error('Innertube client initialization timeout')), 5000)
+          setTimeout(() => reject(new Error(`Innertube client initialization timeout after ${initTimeout}ms`)), initTimeout)
         )
       ]);
 

@@ -49,17 +49,34 @@ class YouTubeService {
       // Method 2: Try Innertube (for full metadata and handles)
       try {
         console.log('Trying Innertube method...');
+
+        // First ensure Innertube is initialized
+        await innertubeHelper.init();
+        console.log('Innertube client is ready, getting live info...');
+
         result = await Promise.race([
           innertubeHelper.getLiveInfo(channelId, videoId, channelHandle),
-          new Promise((_, reject) => setTimeout(() => reject(new Error('Innertube timeout')), 8000))
+          new Promise((_, reject) => setTimeout(() => reject(new Error('Innertube getLiveInfo timeout after 8s')), 8000))
         ]);
+
         if (result && result.isLiveNow) {
-          console.log('Innertube detected live stream');
+          console.log('✅ Innertube detected live stream:', result.videoId);
           this.setCacheAndReturn(cacheKey, result);
           return result;
+        } else if (result) {
+          console.log('Innertube found channel but no live stream');
+        } else {
+          console.log('Innertube returned null result');
         }
       } catch (error) {
-        console.warn('InnerTube method failed:', error.message);
+        console.error('❌ InnerTube method failed:', error.message);
+
+        // If it's an initialization error, try to reset the client
+        if (error.message.includes('initialization') || error.message.includes('timeout')) {
+          console.log('Attempting to reset Innertube client...');
+          innertubeHelper.client = null;
+          innertubeHelper.initPromise = null;
+        }
       }
 
       // Method 3: Try web scraping as final fallback
