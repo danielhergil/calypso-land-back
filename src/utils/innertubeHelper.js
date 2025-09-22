@@ -41,13 +41,29 @@ class InnerTubeHelper {
       const youtubeCookies = process.env.YOUTUBE_COOKIES ||
         'YSC=VYj-r2qqIuQ; VISITOR_PRIVACY_METADATA=CgJFUxIhEh0SGwsMDg8QERITFBUWFxgZGhscHR4fICEiIyQlJiA2; PREF=f6=40000000&tz=Europe.Madrid; __Secure-YEC=CgszTjg0M2w2TVBfVSi7mMXGBjInCgJFUxIhEh0SGwsMDg8QERITFBUWFxgZGhscHR4fICEiIyQlJiA2';
 
-      // Configure Innertube with cookies and enhanced headers
+      // Configure Innertube with enhanced settings for cloud environments
       const innertubeConfig = {
         visitor_data: undefined,
-        enable_session_cache: false,
+        enable_session_cache: true, // Enable session cache for consistency
         language: 'en',
         location: 'ES', // Spain
-        cookie: youtubeCookies
+        cookie: youtubeCookies,
+        // Add additional configuration for cloud environments
+        client_name: 'WEB',
+        client_version: '2.20231219.04.00',
+        // Try to mimic a real browser session
+        session: {
+          api_key: undefined, // Let youtubei.js handle this
+          context: {
+            client: {
+              clientName: 'WEB',
+              clientVersion: '2.20231219.04.00',
+              gl: 'ES',
+              hl: 'en',
+              userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
+            }
+          }
+        }
       };
 
       console.log('Creating Innertube client with Spanish locale and consent cookies...');
@@ -332,6 +348,42 @@ class InnerTubeHelper {
 
             console.log(`Video section debug: videos=${!!channel.videos}, contents=${!!channel.videos?.contents}, count=${channel.videos?.contents?.length || 0}, timeRemaining=${timeRemaining}ms`);
 
+            // If videos section is empty, try search approach instead
+            if ((!channel.videos || !channel.videos.contents || channel.videos.contents.length === 0) && Date.now() - startTime < timeLimit) {
+              console.log('Videos section empty, trying search approach for live content...');
+              try {
+                const searchResults = await Promise.race([
+                  this.client.search(`${channelId} live`, { type: 'video' }),
+                  new Promise((_, reject) => setTimeout(() => reject(new Error('Search timeout')), 3000))
+                ]);
+
+                if (searchResults && searchResults.contents) {
+                  for (const result of searchResults.contents.slice(0, 5)) {
+                    if (result && result.id && result.basic_info) {
+                      const channelMatch = result.basic_info.channel?.id === channelId;
+                      const isLive = result.basic_info.is_live ||
+                                    result.badges?.some(badge =>
+                                      badge && badge.label && badge.label.toLowerCase().includes('live'));
+
+                      if (channelMatch && isLive) {
+                        console.log(`Found live video via search: ${result.id}`);
+                        const videoInfo = await this.getVideoInfo(result.id);
+                        if (videoInfo && videoInfo.isLiveNow) {
+                          return {
+                            ...videoInfo,
+                            channelId: channelId,
+                            liveChatEnabled: true
+                          };
+                        }
+                      }
+                    }
+                  }
+                }
+              } catch (searchError) {
+                console.log('Search approach failed:', searchError.message);
+              }
+            }
+
             if (channel.videos && channel.videos.contents && Date.now() - startTime < timeLimit) {
               console.log(`Checking first ${maxVideosToCheck} videos for live content (live_streams available: ${!!channel.live_streams})`);
               const videosToCheck = channel.videos.contents.slice(0, maxVideosToCheck);
@@ -362,7 +414,14 @@ class InnerTubeHelper {
 
             console.log(`No live content found in channel (total time: ${Date.now() - startTime}ms)`);
 
-            // Return a proper "not live" response instead of null to prevent fallback to web scraping
+            // If channel access worked but no videos were found, this might be due to YouTube restrictions
+            // Return null to allow web scraping fallback, which might be more successful
+            if (channel && (!channel.videos || !channel.videos.contents || channel.videos.contents.length === 0)) {
+              console.log('Channel accessible but videos section empty - allowing web scraping fallback');
+              return null;
+            }
+
+            // Return a proper "not live" response when we successfully checked the channel content
             return {
               method: 'innertube',
               videoId: null,
